@@ -55,6 +55,14 @@
     <div><label>報告者</label><input id="reporter" placeholder="根本星南"></div>
     <div class="wide"><label>概要（1ページ目の【概要】枠。「・」から書くと箇条書きっぽくなる）</label>
       <textarea id="overview" rows="2" placeholder="・厨房にチャバネゴキブリの生息が多数見られました。"></textarea></div>
+    <div class="wide" id="toridoll" style="display:none">
+      <label>🏷 トリドール物件と判定しました — ファイル名タグ（ファイル名が「2026_06_24丸亀製麺　○○店【ゴミ】」形式になります）</label>
+      <span id="tags">
+        <label style="display:inline;font-size:14px;color:#222"><input type="checkbox" value="ゴミ"> ゴミ</label>
+        <label style="display:inline;font-size:14px;color:#222;margin-left:14px"><input type="checkbox" value="要改善箇所"> 要改善箇所</label>
+        <label style="display:inline;font-size:14px;color:#222;margin-left:14px"><input type="checkbox" value="要修繕箇所"> 要修繕箇所</label>
+      </span>
+    </div>
   </div>
 
   <div id="drop">ここに写真をドラッグ&ドロップ（またはクリックして選択）</div>
@@ -87,6 +95,21 @@ const photos = [];  // {origDataUrl, dataUrl, w, h, place, desc, circles:[]}
 let editing = -1;
 
 document.getElementById('date').value = new Date().toISOString().slice(0, 10);
+
+// トリドールの国内ブランド（店名がこれで始まればトリドール命名規則を使う）
+const TORIDOLL_BRANDS = [
+  '丸亀製麺', 'コナズ珈琲', "KONA'S", 'KNOWS COFFEE', '肉のヤマ牛',
+  '長田本庄軒', 'とりどーる', '丸醤屋', 'ラー麺ずんどう屋', 'ずんどう屋',
+  '豚屋とん一', '晩杯屋', '立呑み晩杯屋', '天ぷらまきの',
+  '焼きたてコッペ製パン', '焼き立てコッペ製パン', 'ソラノイロ',
+];
+function isToridoll(store) {
+  return TORIDOLL_BRANDS.some(b => store.startsWith(b));
+}
+document.getElementById('store').addEventListener('input', e => {
+  document.getElementById('toridoll').style.display =
+    isToridoll(e.target.value.trim()) ? '' : 'none';
+});
 // 報告者は前回入力を記憶
 const savedReporter = localStorage.getItem('reporter');
 if (savedReporter) document.getElementById('reporter').value = savedReporter;
@@ -283,8 +306,17 @@ gen.onclick = async () => {
     }, JSZip);
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE',
       mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
-    const ymd = `${String(y % 100).padStart(2, '0')}${String(m).padStart(2, '0')}${String(dd).padStart(2, '0')}`;
-    const fname = `${store.replace(/[\\\/:*?"<>|]/g, '')}_${ymd}_写真報告書.docx`;
+    const cleanStore = store.replace(/[\\\/:*?"<>|]/g, '');
+    let fname;
+    if (isToridoll(store)) {
+      // トリドール規則: 2026_06_24丸亀製麺　JR有楽町駅店【ゴミ】.docx
+      const tags = [...document.querySelectorAll('#tags input:checked')].map(c => c.value);
+      const dateStr = `${y}_${String(m).padStart(2, '0')}_${String(dd).padStart(2, '0')}`;
+      fname = `${dateStr}${cleanStore}${tags.length ? `【${tags.join('+')}】` : ''}.docx`;
+    } else {
+      const ymd = `${String(y % 100).padStart(2, '0')}${String(m).padStart(2, '0')}${String(dd).padStart(2, '0')}`;
+      fname = `${cleanStore}_${ymd}_写真報告書.docx`;
+    }
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = fname;
