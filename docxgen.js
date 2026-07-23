@@ -67,8 +67,9 @@
 
   function descCellContent(lines) {
     if (!lines.length) return '<w:p/>';
+    // 行送り18pt(360twips) = KollaBo実物と同じ行間
     return lines.map(ln =>
-      `<w:p><w:pPr><w:spacing w:before="0" w:after="0"/><w:jc w:val="both"/></w:pPr>` +
+      `<w:p><w:pPr><w:spacing w:lineRule="atLeast" w:line="360" w:before="0" w:after="0"/><w:jc w:val="both"/></w:pPr>` +
       `<w:r>${rpr(21)}${ln ? `<w:t xml:space="preserve">${esc(ln)}</w:t>` : ''}</w:r></w:p>`
     ).join('');
   }
