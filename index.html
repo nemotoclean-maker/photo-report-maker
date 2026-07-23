@@ -85,6 +85,7 @@
     <span class="sep"></span>
     <button id="c-red" class="active">🔴 赤</button>
     <button id="c-yellow">🟡 黄</button>
+    <button id="c-blue">🔵 青</button>
     <span class="sep"></span>
     <button id="img-rot" title="写真を90°回転（描いた図形も一緒に回る）">🔄 写真90°</button>
     <span class="sep"></span>
@@ -138,9 +139,10 @@ function drawShape(ctx, s, W, selected) {
     ctx.ellipse(s.cx, s.cy, s.rx || 1, s.ry || 1, s.angle || 0, 0, Math.PI * 2);
     ctx.stroke();
   } else if (s.type === 'arrow') {
+    ctx.lineWidth = lw * 1.8;  // 矢印は太めに
     const hx = s.x2, hy = s.y2;
     const ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
-    const head = lw * 3.5;
+    const head = lw * 5;
     // 軸（先端は矢じりの分だけ短く）
     ctx.beginPath();
     ctx.moveTo(s.x1, s.y1);
@@ -409,8 +411,9 @@ function setActive(groupIds, btn) {
 }
 document.getElementById('t-ellipse').onclick = e => { tool = 'ellipse'; setActive(['t-ellipse', 't-arrow'], e.target); };
 document.getElementById('t-arrow').onclick = e => { tool = 'arrow'; setActive(['t-ellipse', 't-arrow'], e.target); };
-document.getElementById('c-red').onclick = e => { color = 'red'; setActive(['c-red', 'c-yellow'], e.target); };
-document.getElementById('c-yellow').onclick = e => { color = 'yellow'; setActive(['c-red', 'c-yellow'], e.target); };
+document.getElementById('c-red').onclick = e => { color = 'red'; setActive(['c-red', 'c-yellow', 'c-blue'], e.target); };
+document.getElementById('c-yellow').onclick = e => { color = 'yellow'; setActive(['c-red', 'c-yellow', 'c-blue'], e.target); };
+document.getElementById('c-blue').onclick = e => { color = '#0070ff'; setActive(['c-red', 'c-yellow', 'c-blue'], e.target); };
 document.getElementById('s-ccw').onclick = () => rotateSelected(-Math.PI / 12);
 document.getElementById('s-cw').onclick = () => rotateSelected(Math.PI / 12);
 document.getElementById('s-del').onclick = () => {
