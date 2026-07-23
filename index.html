@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>写真報告書メーカー</title>
+<style>
+  :root { --accent: #2f6f4f; --bg: #f5f4f0; --card: #fff; --line: #ddd; }
+  * { box-sizing: border-box; }
+  body { font-family: "Yu Gothic UI", "Meiryo", sans-serif; margin: 0; background: var(--bg); color: #222; }
+  header { background: var(--accent); color: #fff; padding: 10px 20px; }
+  header h1 { font-size: 18px; margin: 0 0 2px; }
+  header .sub { font-size: 12px; opacity: .9; }
+  main { max-width: 900px; margin: 0 auto; padding: 16px; }
+  .meta { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 14px; display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; }
+  .meta label { font-size: 12px; color: #555; display: block; margin-bottom: 3px; }
+  .meta input, .meta textarea { width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 14px; font-family: inherit; }
+  .meta .wide { grid-column: 1 / -1; }
+  #drop { margin: 14px 0; border: 2px dashed #aaa; border-radius: 8px; padding: 26px; text-align: center; color: #777; background: #fafaf7; cursor: pointer; }
+  #drop.over { border-color: var(--accent); background: #eef6f1; color: var(--accent); }
+  #list { display: flex; flex-direction: column; gap: 10px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: flex; gap: 12px; align-items: flex-start; }
+  .card.dragging { opacity: 0.4; }
+  .card .no { font-weight: bold; color: var(--accent); width: 66px; flex-shrink: 0; text-align: center; font-size: 13px; }
+  .card img { width: 150px; height: 110px; object-fit: contain; background: #eee; border-radius: 4px; cursor: pointer; flex-shrink: 0; }
+  .card .fields { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+  .card input, .card textarea { width: 100%; padding: 5px 8px; border: 1px solid var(--line); border-radius: 5px; font-size: 14px; font-family: inherit; }
+  .card textarea { resize: vertical; min-height: 52px; }
+  .card .btns { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+  .card .btns button { border: 1px solid var(--line); background: #fff; border-radius: 5px; padding: 4px 9px; cursor: pointer; font-size: 13px; }
+  .card .btns button:hover { background: #f0f0ec; }
+  .hint { font-size: 11px; color: #888; }
+  #genbar { position: sticky; bottom: 0; background: linear-gradient(transparent, var(--bg) 30%); padding: 14px 0; text-align: center; }
+  #gen { background: var(--accent); color: #fff; font-size: 17px; border: none; border-radius: 8px; padding: 12px 44px; cursor: pointer; }
+  #gen:disabled { background: #9bb5a8; cursor: wait; }
+  #result { margin-top: 8px; font-size: 14px; background: var(--card); border-radius: 8px; display: inline-block; padding: 8px 16px; }
+  #result:empty { display: none; }
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 10; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  #modal.show { display: flex; }
+  #modal .tools { display: flex; gap: 8px; align-items: center; background: #fff; padding: 8px 14px; border-radius: 8px; flex-wrap: wrap; }
+  #modal .tools button { border: 1px solid var(--line); background: #fff; border-radius: 5px; padding: 6px 14px; cursor: pointer; font-size: 14px; }
+  #modal .tools button.active { outline: 3px solid var(--accent); }
+  #canvas { background: #000; max-width: 92vw; max-height: 72vh; cursor: crosshair; border-radius: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>📷 写真報告書メーカー</h1>
+  <div class="sub">写真を追加 → 説明を書いて → 生成。順番はドラッグか▲▼で入れ替え。写真クリックで赤丸を描ける。写真がサーバーに送られることはありません（全部このブラウザの中で処理）。</div>
+</header>
+<main>
+  <div class="meta">
+    <div><label>店名</label><input id="store" placeholder="ラーメン豚山 北千住東口店"></div>
+    <div><label>施工日</label><input id="date" type="date"></div>
+    <div><label>報告者</label><input id="reporter" placeholder="根本星南"></div>
+    <div class="wide"><label>概要（1ページ目の【概要】枠。「・」から書くと箇条書きっぽくなる）</label>
+      <textarea id="overview" rows="2" placeholder="・厨房にチャバネゴキブリの生息が多数見られました。"></textarea></div>
+  </div>
+
+  <div id="drop">ここに写真をドラッグ&ドロップ（またはクリックして選択）</div>
+  <input type="file" id="file" accept="image/*" multiple style="display:none">
+
+  <div id="list"></div>
+
+  <div id="genbar">
+    <button id="gen">📄 Wordファイルを生成してダウンロード</button>
+    <div id="result"></div>
+  </div>
+</main>
+
+<div id="modal">
+  <div class="tools">
+    <button id="c-red" class="active">🔴 赤丸</button>
+    <button id="c-yellow">🟡 黄丸</button>
+    <button id="c-undo">↩ 戻す</button>
+    <span class="hint">ドラッグで楕円を描く</span>
+    <button id="c-ok" style="background:var(--accent);color:#fff">✔ 確定</button>
+    <button id="c-cancel">✖ キャンセル</button>
+  </div>
+  <canvas id="canvas"></canvas>
+</div>
+
+<script src="jszip.min.js"></script>
+<script src="docxgen.js"></script>
+<script>
+const photos = [];  // {origDataUrl, dataUrl, w, h, place, desc, circles:[]}
+let editing = -1;
+
+document.getElementById('date').value = new Date().toISOString().slice(0, 10);
+// 報告者は前回入力を記憶
+const savedReporter = localStorage.getItem('reporter');
+if (savedReporter) document.getElementById('reporter').value = savedReporter;
+
+// ---------- 写真追加 ----------
+const drop = document.getElementById('drop');
+const fileInput = document.getElementById('file');
+drop.onclick = () => fileInput.click();
+drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
+drop.ondragleave = () => drop.classList.remove('over');
+drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); };
+fileInput.onchange = () => { addFiles(fileInput.files); fileInput.value = ''; };
+
+function addFiles(files) {
+  [...files].forEach(f => {
+    if (!f.type.startsWith('image/')) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const img = new Image();
+      img.onload = () => {
+        const MAX = 1600;
+        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
+        const cv = document.createElement('canvas');
+        cv.width = Math.round(img.width * scale);
+        cv.height = Math.round(img.height * scale);
+        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+        const url = cv.toDataURL('image/jpeg', 0.9);
+        photos.push({ origDataUrl: url, dataUrl: url, w: cv.width, h: cv.height, place: '', desc: '', circles: [] });
+        render();
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(f);
+  });
+}
+
+// ---------- 一覧表示・並べ替え ----------
+const list = document.getElementById('list');
+function render() {
+  list.innerHTML = '';
+  photos.forEach((p, i) => {
+    const card = document.createElement('div');
+    card.className = 'card';
+    card.draggable = true;
+    card.innerHTML = `
+      <div class="no">【写真${i + 1}】<div class="hint">ドラッグで移動</div></div>
+      <img src="${p.dataUrl}" title="クリックで丸を描く">
+      <div class="fields">
+        <input placeholder="場所（例: 厨房 洗浄機下）" value="${esc(p.place)}" data-f="place">
+        <textarea placeholder="説明（例: チャバネゴキブリの生息が見られました。）" data-f="desc">${esc(p.desc)}</textarea>
+      </div>
+      <div class="btns">
+        <button data-a="up" title="上へ">▲</button>
+        <button data-a="down" title="下へ">▼</button>
+        <button data-a="del" title="削除">🗑</button>
+      </div>`;
+    card.querySelector('img').onclick = () => openEditor(i);
+    card.querySelectorAll('[data-f]').forEach(el => {
+      el.oninput = () => { photos[i][el.dataset.f] = el.value; };
+    });
+    card.querySelector('[data-a=up]').onclick = () => move(i, i - 1);
+    card.querySelector('[data-a=down]').onclick = () => move(i, i + 1);
+    card.querySelector('[data-a=del]').onclick = () => { photos.splice(i, 1); render(); };
+    card.ondragstart = e => { e.dataTransfer.setData('text/plain', i); card.classList.add('dragging'); };
+    card.ondragend = () => card.classList.remove('dragging');
+    card.ondragover = e => e.preventDefault();
+    card.ondrop = e => {
+      e.preventDefault();
+      move(+e.dataTransfer.getData('text/plain'), i);
+    };
+    list.appendChild(card);
+  });
+}
+function move(from, to) {
+  if (to < 0 || to >= photos.length || from === to) return;
+  const [x] = photos.splice(from, 1);
+  photos.splice(to, 0, x);
+  render();
+}
+function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
+
+// ---------- 丸描き込みエディタ ----------
+const modal = document.getElementById('modal');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+let baseImg = null, color = 'red', drawing = false, sx = 0, sy = 0;
+
+function openEditor(i) {
+  editing = i;
+  baseImg = new Image();
+  baseImg.onload = () => {
+    canvas.width = baseImg.width;
+    canvas.height = baseImg.height;
+    redraw();
+    modal.classList.add('show');
+  };
+  baseImg.src = photos[i].origDataUrl;
+}
+function redraw(previewCircle) {
+  ctx.drawImage(baseImg, 0, 0);
+  const all = previewCircle ? [...photos[editing].circles, previewCircle] : photos[editing].circles;
+  all.forEach(c => {
+    ctx.beginPath();
+    ctx.ellipse((c.x1 + c.x2) / 2, (c.y1 + c.y2) / 2,
+      Math.abs(c.x2 - c.x1) / 2 || 1, Math.abs(c.y2 - c.y1) / 2 || 1, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = c.color;
+    ctx.lineWidth = Math.max(4, canvas.width / 220);
+    ctx.stroke();
+  });
+}
+function pos(e) {
+  const r = canvas.getBoundingClientRect();
+  return [(e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height];
+}
+canvas.onpointerdown = e => { drawing = true; [sx, sy] = pos(e); canvas.setPointerCapture(e.pointerId); };
+canvas.onpointermove = e => {
+  if (!drawing) return;
+  const [x, y] = pos(e);
+  redraw({ x1: sx, y1: sy, x2: x, y2: y, color });
+};
+canvas.onpointerup = e => {
+  if (!drawing) return;
+  drawing = false;
+  const [x, y] = pos(e);
+  if (Math.abs(x - sx) > 8 && Math.abs(y - sy) > 8) {
+    photos[editing].circles.push({ x1: sx, y1: sy, x2: x, y2: y, color });
+  }
+  redraw();
+};
+document.getElementById('c-red').onclick = e => { color = 'red'; setActive(e.target); };
+document.getElementById('c-yellow').onclick = e => { color = 'yellow'; setActive(e.target); };
+function setActive(btn) {
+  document.querySelectorAll('#modal .tools button').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+document.getElementById('c-undo').onclick = () => { photos[editing].circles.pop(); redraw(); };
+document.getElementById('c-cancel').onclick = () => { modal.classList.remove('show'); };
+document.getElementById('c-ok').onclick = () => {
+  photos[editing].dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+  modal.classList.remove('show');
+  render();
+};
+
+// ---------- 生成（すべてブラウザ内で完結） ----------
+const gen = document.getElementById('gen');
+const result = document.getElementById('result');
+
+// dataURL → 0.8MB以下のJPEG Uint8Array
+async function toJpegBytes(dataUrl) {
+  let url = dataUrl, quality = 0.9;
+  while (true) {
+    const bin = atob(url.split(',')[1]);
+    if (bin.length <= 800000 || quality <= 0.3) {
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return arr;
+    }
+    quality -= 0.1;
+    url = await recompress(url, quality);
+  }
+}
+function recompress(dataUrl, quality) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      cv.getContext('2d').drawImage(img, 0, 0);
+      res(cv.toDataURL('image/jpeg', quality));
+    };
+    img.src = dataUrl;
+  });
+}
+
+gen.onclick = async () => {
+  if (!photos.length) { result.textContent = '写真を追加してください'; return; }
+  const store = document.getElementById('store').value.trim();
+  if (!store) { result.textContent = '店名を入力してください'; return; }
+  const reporter = document.getElementById('reporter').value.trim() || '　';
+  localStorage.setItem('reporter', reporter);
+  gen.disabled = true;
+  result.textContent = '生成中…';
+  try {
+    const d = document.getElementById('date').value || new Date().toISOString().slice(0, 10);
+    const [y, m, dd] = d.split('-').map(Number);
+    const phList = [];
+    for (const p of photos) {
+      phList.push({ data: await toJpegBytes(p.dataUrl), wPx: p.w, hPx: p.h, place: p.place, desc: p.desc });
+    }
+    const zip = DocxGen.buildReportZip({
+      store, y, m, d: dd, reporter,
+      overview: document.getElementById('overview').value,
+      photos: phList,
+    }, JSZip);
+    const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE',
+      mimeType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+    const ymd = `${String(y % 100).padStart(2, '0')}${String(m).padStart(2, '0')}${String(dd).padStart(2, '0')}`;
+    const fname = `${store.replace(/[\\\/:*?"<>|]/g, '')}_${ymd}_写真報告書.docx`;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = fname;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    result.innerHTML = `✅ <b>${fname}</b> をダウンロードしました<br>` +
+      `<span class="hint">PDFが必要なときは、ダウンロードしたファイルをWordで開いて「ファイル → エクスポート → PDF/XPSの作成」で保存してください。</span>`;
+  } catch (e) {
+    result.textContent = 'エラー: ' + e;
+  }
+  gen.disabled = false;
+};
+</script>
+</body>
+</html>
