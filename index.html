@@ -99,7 +99,7 @@
     <button id="c-cancel">✖ キャンセル</button>
   </div>
   <canvas id="canvas"></canvas>
-  <div class="hint" style="color:#ddd">ドラッグで描画 / クリックで図形を選択して回転・削除</div>
+  <div class="hint" style="color:#ddd">何もない所でドラッグ=描画 / 図形をドラッグ=移動 / 図形クリック=選択して回転・削除</div>
 </div>
 
 <script src="jszip.min.js"></script>
@@ -384,25 +384,55 @@ function rotateSelected(delta) {
   redraw();
 }
 
-canvas.onpointerdown = e => { drawing = true; moved = false; const p = pos(e); sx = p[0]; sy = p[1]; canvas.setPointerCapture(e.pointerId); };
+let mode = 'draw';  // 'draw' | 'move'
+let lastX = 0, lastY = 0;
+canvas.onpointerdown = e => {
+  drawing = true; moved = false;
+  const p = pos(e);
+  sx = p[0]; sy = p[1]; lastX = p[0]; lastY = p[1];
+  const hit = hitTest(p[0], p[1]);
+  if (hit >= 0) {
+    // 図形の上から開始 → 選択してドラッグ移動
+    mode = 'move';
+    selected = hit;
+    updateSelButtons();
+    redraw();
+  } else {
+    mode = 'draw';
+  }
+  canvas.setPointerCapture(e.pointerId);
+};
 canvas.onpointermove = e => {
   if (!drawing) return;
   const p = pos(e);
   if (Math.abs(p[0] - sx) > 6 || Math.abs(p[1] - sy) > 6) moved = true;
-  if (moved) redraw(makeShape(sx, sy, p[0], p[1]));
+  if (mode === 'move') {
+    const s = photos[editing].shapes[selected];
+    const dx = p[0] - lastX, dy = p[1] - lastY;
+    if (s.type === 'ellipse') { s.cx += dx; s.cy += dy; }
+    else { s.x1 += dx; s.y1 += dy; s.x2 += dx; s.y2 += dy; }
+    lastX = p[0]; lastY = p[1];
+    redraw();
+  } else if (moved) {
+    redraw(makeShape(sx, sy, p[0], p[1]));
+  }
 };
 canvas.onpointerup = e => {
   if (!drawing) return;
   drawing = false;
   const p = pos(e);
-  if (moved && Math.abs(p[0] - sx) > 10 && (tool === 'arrow' || Math.abs(p[1] - sy) > 10)) {
+  if (mode === 'move') {
+    redraw();  // 移動確定（選択は維持）
+  } else if (moved && Math.abs(p[0] - sx) > 10 && (tool === 'arrow' || Math.abs(p[1] - sy) > 10)) {
     photos[editing].shapes.push(makeShape(sx, sy, p[0], p[1]));
     selected = -1;
+    updateSelButtons();
+    redraw();
   } else {
-    selected = hitTest(p[0], p[1]);  // クリック=選択
+    selected = -1;  // 何もない所をクリック=選択解除
+    updateSelButtons();
+    redraw();
   }
-  updateSelButtons();
-  redraw();
 };
 
 function setActive(groupIds, btn) {
