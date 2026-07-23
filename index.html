@@ -35,18 +35,20 @@
   #gen:disabled { background: #9bb5a8; cursor: wait; }
   #result { margin-top: 8px; font-size: 14px; background: var(--card); border-radius: 8px; display: inline-block; padding: 8px 16px; }
   #result:empty { display: none; }
-  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.75); z-index: 10; flex-direction: column; align-items: center; justify-content: center; gap: 10px; }
+  #modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.78); z-index: 10; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
   #modal.show { display: flex; }
-  #modal .tools { display: flex; gap: 8px; align-items: center; background: #fff; padding: 8px 14px; border-radius: 8px; flex-wrap: wrap; }
-  #modal .tools button { border: 1px solid var(--line); background: #fff; border-radius: 5px; padding: 6px 14px; cursor: pointer; font-size: 14px; }
+  #modal .tools { display: flex; gap: 6px; align-items: center; background: #fff; padding: 7px 12px; border-radius: 8px; flex-wrap: wrap; max-width: 94vw; }
+  #modal .tools button { border: 1px solid var(--line); background: #fff; border-radius: 5px; padding: 6px 11px; cursor: pointer; font-size: 14px; }
   #modal .tools button.active { outline: 3px solid var(--accent); }
-  #canvas { background: #000; max-width: 92vw; max-height: 72vh; cursor: crosshair; border-radius: 4px; }
+  #modal .tools .sep { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
+  #modal .tools button:disabled { opacity: .35; cursor: default; }
+  #canvas { background: #000; max-width: 92vw; max-height: 68vh; cursor: crosshair; border-radius: 4px; }
 </style>
 </head>
 <body>
 <header>
   <h1>📷 写真報告書メーカー</h1>
-  <div class="sub">写真を追加 → 説明を書いて → 生成。順番はドラッグか▲▼で入れ替え。写真クリックで赤丸を描ける。写真がサーバーに送られることはありません（全部このブラウザの中で処理）。</div>
+  <div class="sub">写真を追加 → 説明を書いて → 生成。順番はドラッグか▲▼。写真クリックで丸・矢印の描き込みと回転。写真がサーバーに送られることはありません（全部このブラウザの中で処理）。</div>
 </header>
 <main>
   <div class="meta">
@@ -78,23 +80,37 @@
 
 <div id="modal">
   <div class="tools">
-    <button id="c-red" class="active">🔴 赤丸</button>
-    <button id="c-yellow">🟡 黄丸</button>
-    <button id="c-undo">↩ 戻す</button>
-    <span class="hint">ドラッグで楕円を描く</span>
+    <button id="t-ellipse" class="active" title="丸を描く">⭕ 丸</button>
+    <button id="t-arrow" title="矢印を描く">↗ 矢印</button>
+    <span class="sep"></span>
+    <button id="c-red" class="active">🔴 赤</button>
+    <button id="c-yellow">🟡 黄</button>
+    <span class="sep"></span>
+    <button id="img-rot" title="写真を90°回転（描いた図形も一緒に回る）">🔄 写真90°</button>
+    <span class="sep"></span>
+    <span class="hint">図形クリックで選択→</span>
+    <button id="s-ccw" disabled title="選択図形を左に15°">⟲</button>
+    <button id="s-cw" disabled title="選択図形を右に15°">⟳</button>
+    <button id="s-del" disabled title="選択図形を削除">🗑</button>
+    <span class="sep"></span>
+    <button id="c-undo" title="最後の図形を取り消し">↩ 戻す</button>
     <button id="c-ok" style="background:var(--accent);color:#fff">✔ 確定</button>
     <button id="c-cancel">✖ キャンセル</button>
   </div>
   <canvas id="canvas"></canvas>
+  <div class="hint" style="color:#ddd">ドラッグで描画 / クリックで図形を選択して回転・削除</div>
 </div>
 
 <script src="jszip.min.js"></script>
 <script src="docxgen.js"></script>
 <script>
-const photos = [];  // {origDataUrl, dataUrl, w, h, place, desc, circles:[]}
+const photos = [];  // {origDataUrl, dataUrl, w, h, place, desc, shapes:[]}
+// shape: {type:'ellipse', cx,cy,rx,ry,angle,color} | {type:'arrow', x1,y1,x2,y2,color}
 let editing = -1;
 
 document.getElementById('date').value = new Date().toISOString().slice(0, 10);
+const savedReporter = localStorage.getItem('reporter');
+if (savedReporter) document.getElementById('reporter').value = savedReporter;
 
 // トリドールの国内ブランド（店名がこれで始まればトリドール命名規則を使う）
 const TORIDOLL_BRANDS = [
@@ -110,9 +126,99 @@ document.getElementById('store').addEventListener('input', e => {
   document.getElementById('toridoll').style.display =
     isToridoll(e.target.value.trim()) ? '' : 'none';
 });
-// 報告者は前回入力を記憶
-const savedReporter = localStorage.getItem('reporter');
-if (savedReporter) document.getElementById('reporter').value = savedReporter;
+
+// ---------- 図形の描画（編集画面と焼き込みで共用） ----------
+function drawShape(ctx, s, W, selected) {
+  const lw = Math.max(4, W / 220);
+  ctx.strokeStyle = s.color;
+  ctx.fillStyle = s.color;
+  ctx.lineWidth = lw;
+  if (s.type === 'ellipse') {
+    ctx.beginPath();
+    ctx.ellipse(s.cx, s.cy, s.rx || 1, s.ry || 1, s.angle || 0, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (s.type === 'arrow') {
+    const hx = s.x2, hy = s.y2;
+    const ang = Math.atan2(s.y2 - s.y1, s.x2 - s.x1);
+    const head = lw * 3.5;
+    // 軸（先端は矢じりの分だけ短く）
+    ctx.beginPath();
+    ctx.moveTo(s.x1, s.y1);
+    ctx.lineTo(hx - head * 0.8 * Math.cos(ang), hy - head * 0.8 * Math.sin(ang));
+    ctx.stroke();
+    // 矢じり
+    ctx.beginPath();
+    ctx.moveTo(hx, hy);
+    ctx.lineTo(hx - head * Math.cos(ang - 0.45), hy - head * Math.sin(ang - 0.45));
+    ctx.lineTo(hx - head * Math.cos(ang + 0.45), hy - head * Math.sin(ang + 0.45));
+    ctx.closePath();
+    ctx.fill();
+  }
+  if (selected) {
+    ctx.save();
+    ctx.strokeStyle = '#00c8ff';
+    ctx.lineWidth = Math.max(2, lw / 2);
+    ctx.setLineDash([8, 6]);
+    const b = shapeBounds(s);
+    ctx.strokeRect(b.x - 8, b.y - 8, b.w + 16, b.h + 16);
+    ctx.restore();
+  }
+}
+function shapeBounds(s) {
+  if (s.type === 'ellipse') {
+    const r = Math.max(s.rx || 1, s.ry || 1);
+    return { x: s.cx - r, y: s.cy - r, w: r * 2, h: r * 2 };
+  }
+  const x = Math.min(s.x1, s.x2), y = Math.min(s.y1, s.y2);
+  return { x, y, w: Math.abs(s.x2 - s.x1), h: Math.abs(s.y2 - s.y1) };
+}
+
+// 画像+図形を焼き込んだdataURLを作る
+function bake(p) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const cv = document.createElement('canvas');
+      cv.width = img.width; cv.height = img.height;
+      const c = cv.getContext('2d');
+      c.drawImage(img, 0, 0);
+      p.shapes.forEach(s => drawShape(c, s, cv.width, false));
+      res(cv.toDataURL('image/jpeg', 0.9));
+    };
+    img.src = p.origDataUrl;
+  });
+}
+
+// 写真を90°時計回りに回転（図形も一緒に回す）
+function rotatePhoto(p) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const W = img.width, H = img.height;
+      const cv = document.createElement('canvas');
+      cv.width = H; cv.height = W;
+      const c = cv.getContext('2d');
+      c.translate(H, 0);
+      c.rotate(Math.PI / 2);
+      c.drawImage(img, 0, 0);
+      p.origDataUrl = cv.toDataURL('image/jpeg', 0.92);
+      const rot = (x, y) => [H - y, x];  // 90°CWの座標変換
+      p.shapes.forEach(s => {
+        if (s.type === 'ellipse') {
+          const r = rot(s.cx, s.cy);
+          s.cx = r[0]; s.cy = r[1];
+          s.angle = (s.angle || 0) + Math.PI / 2;
+        } else {
+          const r1 = rot(s.x1, s.y1), r2 = rot(s.x2, s.y2);
+          s.x1 = r1[0]; s.y1 = r1[1]; s.x2 = r2[0]; s.y2 = r2[1];
+        }
+      });
+      const t = p.w; p.w = p.h; p.h = t;
+      res();
+    };
+    img.src = p.origDataUrl;
+  });
+}
 
 // ---------- 写真追加 ----------
 const drop = document.getElementById('drop');
@@ -137,7 +243,7 @@ function addFiles(files) {
         cv.height = Math.round(img.height * scale);
         cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
         const url = cv.toDataURL('image/jpeg', 0.9);
-        photos.push({ origDataUrl: url, dataUrl: url, w: cv.width, h: cv.height, place: '', desc: '', circles: [] });
+        photos.push({ origDataUrl: url, dataUrl: url, w: cv.width, h: cv.height, place: '', desc: '', shapes: [] });
         render();
       };
       img.src = reader.result;
@@ -156,7 +262,7 @@ function render() {
     card.draggable = true;
     card.innerHTML = `
       <div class="no">【写真${i + 1}】<div class="hint">ドラッグで移動</div></div>
-      <img src="${p.dataUrl}" title="クリックで丸を描く">
+      <img src="${p.dataUrl}" title="クリックで丸・矢印を描く / 回転">
       <div class="fields">
         <input placeholder="場所（例: 厨房 洗浄機下）" value="${esc(p.place)}" data-f="place">
         <textarea placeholder="説明（例: チャバネゴキブリの生息が見られました。）" data-f="desc">${esc(p.desc)}</textarea>
@@ -164,6 +270,7 @@ function render() {
       <div class="btns">
         <button data-a="up" title="上へ">▲</button>
         <button data-a="down" title="下へ">▼</button>
+        <button data-a="rot" title="写真を90°回転">🔄</button>
         <button data-a="del" title="削除">🗑</button>
       </div>`;
     card.querySelector('img').onclick = () => openEditor(i);
@@ -172,6 +279,11 @@ function render() {
     });
     card.querySelector('[data-a=up]').onclick = () => move(i, i - 1);
     card.querySelector('[data-a=down]').onclick = () => move(i, i + 1);
+    card.querySelector('[data-a=rot]').onclick = async () => {
+      await rotatePhoto(photos[i]);
+      photos[i].dataUrl = await bake(photos[i]);
+      render();
+    };
     card.querySelector('[data-a=del]').onclick = () => { photos.splice(i, 1); render(); };
     card.ondragstart = e => { e.dataTransfer.setData('text/plain', i); card.classList.add('dragging'); };
     card.ondragend = () => card.classList.remove('dragging');
@@ -191,64 +303,139 @@ function move(from, to) {
 }
 function esc(s) { return (s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); }
 
-// ---------- 丸描き込みエディタ ----------
+// ---------- 描き込みエディタ ----------
 const modal = document.getElementById('modal');
 const canvas = document.getElementById('canvas');
 const ctx = canvas.getContext('2d');
-let baseImg = null, color = 'red', drawing = false, sx = 0, sy = 0;
+let baseImg = null, color = 'red', tool = 'ellipse';
+let drawing = false, sx = 0, sy = 0, selected = -1, moved = false;
 
 function openEditor(i) {
   editing = i;
+  selected = -1;
   baseImg = new Image();
   baseImg.onload = () => {
     canvas.width = baseImg.width;
     canvas.height = baseImg.height;
     redraw();
     modal.classList.add('show');
+    updateSelButtons();
   };
   baseImg.src = photos[i].origDataUrl;
 }
-function redraw(previewCircle) {
+function redraw(preview) {
   ctx.drawImage(baseImg, 0, 0);
-  const all = previewCircle ? [...photos[editing].circles, previewCircle] : photos[editing].circles;
-  all.forEach(c => {
-    ctx.beginPath();
-    ctx.ellipse((c.x1 + c.x2) / 2, (c.y1 + c.y2) / 2,
-      Math.abs(c.x2 - c.x1) / 2 || 1, Math.abs(c.y2 - c.y1) / 2 || 1, 0, 0, Math.PI * 2);
-    ctx.strokeStyle = c.color;
-    ctx.lineWidth = Math.max(4, canvas.width / 220);
-    ctx.stroke();
-  });
+  photos[editing].shapes.forEach((s, idx) => drawShape(ctx, s, canvas.width, idx === selected));
+  if (preview) drawShape(ctx, preview, canvas.width, false);
 }
 function pos(e) {
   const r = canvas.getBoundingClientRect();
   return [(e.clientX - r.left) * canvas.width / r.width, (e.clientY - r.top) * canvas.height / r.height];
 }
-canvas.onpointerdown = e => { drawing = true; [sx, sy] = pos(e); canvas.setPointerCapture(e.pointerId); };
+function makeShape(x1, y1, x2, y2) {
+  if (tool === 'ellipse') {
+    return { type: 'ellipse', cx: (x1 + x2) / 2, cy: (y1 + y2) / 2,
+      rx: Math.abs(x2 - x1) / 2 || 1, ry: Math.abs(y2 - y1) / 2 || 1, angle: 0, color };
+  }
+  return { type: 'arrow', x1, y1, x2, y2, color };
+}
+function hitTest(x, y) {
+  const shapes = photos[editing].shapes;
+  const tol = Math.max(12, canvas.width / 60);
+  for (let i = shapes.length - 1; i >= 0; i--) {
+    const s = shapes[i];
+    if (s.type === 'ellipse') {
+      const dx = x - s.cx, dy = y - s.cy, a = -(s.angle || 0);
+      const lx = dx * Math.cos(a) - dy * Math.sin(a);
+      const ly = dx * Math.sin(a) + dy * Math.cos(a);
+      const v = Math.pow(lx / s.rx, 2) + Math.pow(ly / s.ry, 2);
+      if (v > 0.5 && v < 1.6) return i;  // 楕円の線の近く
+    } else {
+      // 線分との距離
+      const L2 = Math.pow(s.x2 - s.x1, 2) + Math.pow(s.y2 - s.y1, 2);
+      let t = L2 ? ((x - s.x1) * (s.x2 - s.x1) + (y - s.y1) * (s.y2 - s.y1)) / L2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      const d = Math.hypot(x - (s.x1 + t * (s.x2 - s.x1)), y - (s.y1 + t * (s.y2 - s.y1)));
+      if (d < tol) return i;
+    }
+  }
+  return -1;
+}
+function updateSelButtons() {
+  const on = selected >= 0;
+  ['s-ccw', 's-cw', 's-del'].forEach(id => document.getElementById(id).disabled = !on);
+}
+function rotateSelected(delta) {
+  if (selected < 0) return;
+  const s = photos[editing].shapes[selected];
+  if (s.type === 'ellipse') {
+    s.angle = (s.angle || 0) + delta;
+  } else {
+    const mx = (s.x1 + s.x2) / 2, my = (s.y1 + s.y2) / 2;
+    const rot = (x, y) => [
+      mx + (x - mx) * Math.cos(delta) - (y - my) * Math.sin(delta),
+      my + (x - mx) * Math.sin(delta) + (y - my) * Math.cos(delta),
+    ];
+    const r1 = rot(s.x1, s.y1), r2 = rot(s.x2, s.y2);
+    s.x1 = r1[0]; s.y1 = r1[1]; s.x2 = r2[0]; s.y2 = r2[1];
+  }
+  redraw();
+}
+
+canvas.onpointerdown = e => { drawing = true; moved = false; const p = pos(e); sx = p[0]; sy = p[1]; canvas.setPointerCapture(e.pointerId); };
 canvas.onpointermove = e => {
   if (!drawing) return;
-  const [x, y] = pos(e);
-  redraw({ x1: sx, y1: sy, x2: x, y2: y, color });
+  const p = pos(e);
+  if (Math.abs(p[0] - sx) > 6 || Math.abs(p[1] - sy) > 6) moved = true;
+  if (moved) redraw(makeShape(sx, sy, p[0], p[1]));
 };
 canvas.onpointerup = e => {
   if (!drawing) return;
   drawing = false;
-  const [x, y] = pos(e);
-  if (Math.abs(x - sx) > 8 && Math.abs(y - sy) > 8) {
-    photos[editing].circles.push({ x1: sx, y1: sy, x2: x, y2: y, color });
+  const p = pos(e);
+  if (moved && Math.abs(p[0] - sx) > 10 && (tool === 'arrow' || Math.abs(p[1] - sy) > 10)) {
+    photos[editing].shapes.push(makeShape(sx, sy, p[0], p[1]));
+    selected = -1;
+  } else {
+    selected = hitTest(p[0], p[1]);  // クリック=選択
   }
+  updateSelButtons();
   redraw();
 };
-document.getElementById('c-red').onclick = e => { color = 'red'; setActive(e.target); };
-document.getElementById('c-yellow').onclick = e => { color = 'yellow'; setActive(e.target); };
-function setActive(btn) {
-  document.querySelectorAll('#modal .tools button').forEach(b => b.classList.remove('active'));
+
+function setActive(groupIds, btn) {
+  groupIds.forEach(id => document.getElementById(id).classList.remove('active'));
   btn.classList.add('active');
 }
-document.getElementById('c-undo').onclick = () => { photos[editing].circles.pop(); redraw(); };
+document.getElementById('t-ellipse').onclick = e => { tool = 'ellipse'; setActive(['t-ellipse', 't-arrow'], e.target); };
+document.getElementById('t-arrow').onclick = e => { tool = 'arrow'; setActive(['t-ellipse', 't-arrow'], e.target); };
+document.getElementById('c-red').onclick = e => { color = 'red'; setActive(['c-red', 'c-yellow'], e.target); };
+document.getElementById('c-yellow').onclick = e => { color = 'yellow'; setActive(['c-red', 'c-yellow'], e.target); };
+document.getElementById('s-ccw').onclick = () => rotateSelected(-Math.PI / 12);
+document.getElementById('s-cw').onclick = () => rotateSelected(Math.PI / 12);
+document.getElementById('s-del').onclick = () => {
+  if (selected < 0) return;
+  photos[editing].shapes.splice(selected, 1);
+  selected = -1;
+  updateSelButtons();
+  redraw();
+};
+document.getElementById('img-rot').onclick = async () => {
+  await rotatePhoto(photos[editing]);
+  selected = -1;
+  updateSelButtons();
+  baseImg = new Image();
+  baseImg.onload = () => { canvas.width = baseImg.width; canvas.height = baseImg.height; redraw(); };
+  baseImg.src = photos[editing].origDataUrl;
+};
+document.getElementById('c-undo').onclick = () => {
+  photos[editing].shapes.pop();
+  if (selected >= photos[editing].shapes.length) { selected = -1; updateSelButtons(); }
+  redraw();
+};
 document.getElementById('c-cancel').onclick = () => { modal.classList.remove('show'); };
-document.getElementById('c-ok').onclick = () => {
-  photos[editing].dataUrl = canvas.toDataURL('image/jpeg', 0.9);
+document.getElementById('c-ok').onclick = async () => {
+  photos[editing].dataUrl = await bake(photos[editing]);
   modal.classList.remove('show');
   render();
 };
@@ -257,7 +444,6 @@ document.getElementById('c-ok').onclick = () => {
 const gen = document.getElementById('gen');
 const result = document.getElementById('result');
 
-// dataURL → 0.8MB以下のJPEG Uint8Array
 async function toJpegBytes(dataUrl) {
   let url = dataUrl, quality = 0.9;
   while (true) {
@@ -294,7 +480,8 @@ gen.onclick = async () => {
   result.textContent = '生成中…';
   try {
     const d = document.getElementById('date').value || new Date().toISOString().slice(0, 10);
-    const [y, m, dd] = d.split('-').map(Number);
+    const parts = d.split('-').map(Number);
+    const y = parts[0], m = parts[1], dd = parts[2];
     const phList = [];
     for (const p of photos) {
       phList.push({ data: await toJpegBytes(p.dataUrl), wPx: p.w, hPx: p.h, place: p.place, desc: p.desc });
