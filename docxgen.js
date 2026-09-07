@@ -98,8 +98,10 @@
   }
 
   // photos: [{data: Uint8Array(JPEG), wPx, hPx, place, desc}]
+  // leak: 文字列を渡すと最後の写真の次のセルに【漏水・排水異常等】枠を作る（ギフトHD用）。
+  //       null/undefined なら枠を作らない。
   function buildDocumentXml(opts) {
-    const { store, y, m, d, reporter, overview, photos } = opts;
+    const { store, y, m, d, reporter, overview, photos, leak } = opts;
     const body = [];
 
     // ===== 表紙 =====
@@ -113,37 +115,46 @@
     body.push(pageBreak());
 
     // ===== 写真ページ =====
-    let photoNo = 0, pageIdx = 0, idx = 0;
-    const rels = [];  // {relId, docPrId}
+    // セル1つ分を items にならべ、ヘッダ+4行/ページで流し込む
+    const items = [];
+    {
+      const lines = ['【概要】'];
+      if (overview) overview.split(/\r?\n/).forEach(ln => lines.push(ln));
+      items.push({ kind: 'text', lines });
+    }
+    photos.forEach(ph => items.push({ kind: 'photo', ph }));
+    if (leak != null) {
+      const lines = ['【漏水・排水異常等】'];
+      String(leak).split(/\r?\n/).forEach(ln => lines.push(ln));
+      items.push({ kind: 'text', lines });
+    }
+
+    let photoNo = 0, idx = 0;
+    const rels = [];  // {relId, n}
     while (true) {
-      pageIdx++;
       const rows = [headerRow()];
       for (let r = 1; r <= 4; r++) {
-        if (pageIdx === 1 && r === 1) {
-          const lines = ['【概要】'];
-          if (overview) overview.split(/\r?\n/).forEach(ln => lines.push(ln));
-          rows.push(row(ROW_H_DXA, '<w:p/>', descCellContent(lines)));
+        const it = items[idx++];
+        if (!it) { rows.push(row(ROW_H_DXA, '<w:p/>', '<w:p/>')); continue; }
+        if (it.kind === 'text') {
+          rows.push(row(ROW_H_DXA, '<w:p/>', descCellContent(it.lines)));
           continue;
         }
-        if (idx < photos.length) {
-          const ph = photos[idx++];
-          photoNo++;
-          const relId = 'rIdImg' + photoNo;
-          rels.push({ relId, n: photoNo });
-          const scale = Math.min(IMG_MAX_W_PT / ph.wPx, IMG_MAX_H_PT / ph.hPx);
-          const cx = Math.round(ph.wPx * scale * 12700);
-          const cy = Math.round(ph.hPx * scale * 12700);
-          const lines = [`【写真${zen(photoNo)}】`];
-          if (ph.place) lines.push(ph.place);
-          if (ph.desc) { lines.push(''); ph.desc.split(/\r?\n/).forEach(ln => lines.push(ln)); }
-          rows.push(row(ROW_H_DXA, photoDrawing(relId, photoNo, cx, cy), descCellContent(lines)));
-        } else {
-          rows.push(row(ROW_H_DXA, '<w:p/>', '<w:p/>'));
-        }
+        const ph = it.ph;
+        photoNo++;
+        const relId = 'rIdImg' + photoNo;
+        rels.push({ relId, n: photoNo });
+        const scale = Math.min(IMG_MAX_W_PT / ph.wPx, IMG_MAX_H_PT / ph.hPx);
+        const cx = Math.round(ph.wPx * scale * 12700);
+        const cy = Math.round(ph.hPx * scale * 12700);
+        const lines = [`【写真${zen(photoNo)}】`];
+        if (ph.place) lines.push(ph.place);
+        if (ph.desc) { lines.push(''); ph.desc.split(/\r?\n/).forEach(ln => lines.push(ln)); }
+        rows.push(row(ROW_H_DXA, photoDrawing(relId, photoNo, cx, cy), descCellContent(lines)));
       }
       body.push(table(rows.join('')));
       body.push(para('株式会社クリーンライフ', { sz: 21 }));
-      if (idx >= photos.length) break;
+      if (idx >= items.length) break;
       body.push(pageBreak());
     }
 

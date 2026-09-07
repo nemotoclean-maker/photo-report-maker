@@ -65,6 +65,14 @@
         <label style="display:inline;font-size:14px;color:#222;margin-left:14px"><input type="checkbox" value="要修繕箇所"> 要修繕箇所</label>
       </span>
     </div>
+    <div class="wide" id="leakbox">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;color:#222">
+        <input type="checkbox" id="leakOn"> 🚰 【漏水・排水異常等】の欄を入れる
+        <span class="hint" id="leakAuto"></span>
+      </label>
+      <textarea id="leak" rows="2" style="display:none;margin-top:5px"
+        placeholder="異常は見られませんでした。">異常は見られませんでした。</textarea>
+    </div>
   </div>
 
   <div id="drop">ここに写真をドラッグ&ドロップ（またはクリックして選択）</div>
@@ -123,9 +131,35 @@ const TORIDOLL_BRANDS = [
 function isToridoll(store) {
   return TORIDOLL_BRANDS.some(b => store.startsWith(b));
 }
+
+// ギフトホールディングスのブランド（店名がこれで始まれば【漏水・排水異常等】欄を既定でON）
+const GIFT_BRANDS = [
+  '町田商店', '横浜家系ラーメン', 'ラーメン豚山', '豚山', '元祖油堂', 'がっとん',
+  '長岡食堂', '鎌田商店', '赤味噌屋', '赤みそ家', 'マルキ屋', '麺みの作', '四天王',
+];
+function isGift(store) {
+  // 「岩槻商店」「池袋商店」など未改称の◯◯商店も拾う
+  return GIFT_BRANDS.some(b => store.startsWith(b)) || /^[^\s　]{1,6}商店/.test(store);
+}
+
+const leakOn = document.getElementById('leakOn');
+const leakBox = document.getElementById('leak');
+leakOn.addEventListener('change', () => {
+  leakBox.style.display = leakOn.checked ? '' : 'none';
+});
+let leakTouched = false;
+leakOn.addEventListener('click', () => { leakTouched = true; });
+
 document.getElementById('store').addEventListener('input', e => {
-  document.getElementById('toridoll').style.display =
-    isToridoll(e.target.value.trim()) ? '' : 'none';
+  const v = e.target.value.trim();
+  document.getElementById('toridoll').style.display = isToridoll(v) ? '' : 'none';
+  const gift = isGift(v);
+  document.getElementById('leakAuto').textContent =
+    gift ? '（ギフトHD物件と判定しました）' : '';
+  if (!leakTouched && leakOn.checked !== gift) {
+    leakOn.checked = gift;
+    leakOn.dispatchEvent(new Event('change'));
+  }
 });
 
 // ---------- 図形の描画（編集画面と焼き込みで共用） ----------
@@ -522,6 +556,7 @@ gen.onclick = async () => {
     const zip = DocxGen.buildReportZip({
       store, y, m, d: dd, reporter,
       overview: document.getElementById('overview').value,
+      leak: leakOn.checked ? (leakBox.value || '異常は見られませんでした。') : null,
       photos: phList,
     }, JSZip);
     const blob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE',
