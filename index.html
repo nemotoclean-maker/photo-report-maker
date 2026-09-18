@@ -615,11 +615,12 @@ gen.onclick = async () => {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
     a.download = fname;
-    document.body.appendChild(a);
+    result.textContent = 'Wordを作成しました。保存が始まらない場合は下のリンクを押してください。';
+    a.textContent = `Wordを保存：${fname}`;
+    a.style.display = 'block';
+    a.style.marginTop = '8px';
+    result.appendChild(a);
     a.click();
-    a.remove();
-    result.innerHTML = `✅ <b>${esc(fname)}</b> をダウンロードしました<br>` +
-      `<span class="hint">PDFが必要なときは、ダウンロードしたファイルをWordで開いて「ファイル → エクスポート → PDF/XPSの作成」で保存してください。</span>`;
   } catch (e) {
     result.textContent = 'エラー: ' + e;
   }

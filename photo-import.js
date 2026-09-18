@@ -114,7 +114,9 @@ window.PhotoImport = (() => {
     const url = URL.createObjectURL(blob), a = document.createElement('a');
     a.href = url; a.download = name;
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 60000);
+    a.textContent = 'チャット用ZIPを保存';
+    a.style.display = 'block';
+    return a;
   }
 
   async function exportForChat() {
@@ -143,8 +145,9 @@ window.PhotoImport = (() => {
       zip.file('captions.json', JSON.stringify(manifest, null, 2));
       zip.file('依頼文.txt', REQUEST);
       const blob = await zip.generateAsync({ type: 'blob', compression: 'STORE' });
-      download(blob, '写真説明文_チャット依頼.zip');
-      say('ZIPを保存しました。契約中のチャットに添付して「説明文データを作って」と依頼してください。返ってきたJSONをここへドラッグします。');
+      const saveLink = download(blob, '写真説明文_チャット依頼.zip');
+      say('ZIPを作成しました。保存が始まらない場合は下のリンクを押してください。契約中のチャットに添付して「説明文データを作って」と依頼してください。返ってきたJSONをここへドラッグします。');
+      status.appendChild(saveLink);
     } catch (error) { say(error.message || 'ZIPを保存できませんでした。', true); }
     finally { lock(false); }
   }
