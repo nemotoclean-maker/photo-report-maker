@@ -43,12 +43,38 @@
   #modal .tools .sep { width: 1px; height: 22px; background: var(--line); margin: 0 3px; }
   #modal .tools button:disabled { opacity: .35; cursor: default; }
   #canvas { background: #000; max-width: 92vw; max-height: 68vh; cursor: crosshair; border-radius: 4px; }
+  .chatbox { margin-top: 14px; background: #fff; border: 1px solid var(--line); border-left: 4px solid var(--accent); border-radius: 8px; padding: 12px 14px; font-size: 14px; line-height: 1.7; }
+  .chatbox p { margin: 4px 0 10px; }
+  .chatbox button { font: inherit; background: #fff; border: 1px solid var(--accent); color: var(--accent); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+  .chatbox button:disabled { opacity: .5; cursor: wait; }
+  #importStatus { margin-top: 8px; white-space: pre-wrap; }
+  #importStatus.error { color: #a42323; }
+  .filename, .caption-note { font-size: 12px; color: #555; overflow-wrap: anywhere; }
+  .caption-note { color: #765013; }
+  .card .include-label { font-size: 13px; display: flex; gap: 5px; align-items: center; }
+  .card .include-label input { width: auto; }
+  .card .fields { min-width: 0; }
+  .card.omitted { background: #f5f5f5; }
+  #omitted { margin-top: 14px; }
+  #omitted summary { cursor: pointer; padding: 10px 0; font-size: 14px; }
+  #omittedList { display: flex; flex-direction: column; gap: 10px; }
+  .pair-label { font-size: 13px; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; }
+  .pair-label select { font: inherit; max-width: 100%; padding: 4px; }
+  #photoCount { font-size: 14px; margin: 10px 0; }
+  @media (max-width: 600px) {
+    .meta { grid-template-columns: 1fr; }
+    .card { flex-wrap: wrap; gap: 8px; }
+    .card .no { width: 56px; }
+    .card img { width: calc(100% - 70px); height: 160px; }
+    .card .fields { flex-basis: calc(100% - 48px); }
+    #gen { width: 100%; padding: 12px; font-size: 16px; }
+  }
 </style>
 </head>
 <body>
 <header>
   <h1>📷 写真報告書メーカー</h1>
-  <div class="sub">写真を追加 → 説明を書いて → 生成。順番はドラッグか▲▼。写真クリックで丸・矢印の描き込みと回転。写真がサーバーに送られることはありません（全部このブラウザの中で処理）。</div>
+  <div class="sub">写真と説明文を取り込み → 内容を確認 → Word出力。写真クリックで丸・矢印の描き込みと回転。このアプリから写真を外部に送信することはありません。</div>
 </header>
 <main>
   <div class="meta">
@@ -75,10 +101,21 @@
     </div>
   </div>
 
-  <div id="drop">ここに写真をドラッグ&ドロップ（またはクリックして選択）</div>
-  <input type="file" id="file" accept="image/*" multiple style="display:none">
+  <section class="chatbox" aria-label="チャットで説明文を作る">
+    <strong>チャットで説明文を作る</strong>
+    <p>このチャットに写真フォルダーを指定して依頼 → 受け取った「写真＋説明文ZIP」を下へドラッグ。説明文と掲載判定がまとめて入ります。</p>
+    <button id="chatExport" type="button">追加した写真をチャット用ZIPにする</button>
+    <details><summary>写真を先に追加した場合</summary>
+      <p>上のボタンでZIPを保存し、契約中のチャットに添付して「説明文データを作って」と依頼してください。返ってきた説明文JSONを下へドラッグすると、同じ写真に説明文が入ります。APIキーは不要です。チャットの利用上限は適用されます。</p>
+    </details>
+    <div id="importStatus" role="status" aria-live="polite"></div>
+  </section>
+  <div id="drop" role="button" tabindex="0" aria-label="写真・ZIP・説明文JSONを追加">写真・写真＋説明文ZIP・説明文JSONをここへドラッグ<br>またはクリックして選択</div>
+  <input type="file" id="file" accept="image/jpeg,image/png,image/webp,.jpg,.jpeg,.png,.webp,.zip,.json" multiple style="display:none">
 
+  <div id="photoCount" aria-live="polite"></div>
   <div id="list"></div>
+  <details id="omitted" hidden><summary id="omittedSummary">除外・保留の写真</summary><div id="omittedList"></div></details>
 
   <div id="genbar">
     <button id="gen">📄 Wordファイルを生成してダウンロード</button>
@@ -112,6 +149,8 @@
 
 <script src="jszip.min.js"></script>
 <script src="docxgen.js"></script>
+<script src="ai-core.js"></script>
+<script src="photo-package.js"></script>
 <script>
 const photos = [];  // {origDataUrl, dataUrl, w, h, place, desc, shapes:[]}
 // shape: {type:'ellipse', cx,cy,rx,ry,angle,color} | {type:'arrow', x1,y1,x2,y2,color}
@@ -260,48 +299,40 @@ function rotatePhoto(p) {
 const drop = document.getElementById('drop');
 const fileInput = document.getElementById('file');
 drop.onclick = () => fileInput.click();
+drop.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fileInput.click(); } };
 drop.ondragover = e => { e.preventDefault(); drop.classList.add('over'); };
 drop.ondragleave = () => drop.classList.remove('over');
 drop.ondrop = e => { e.preventDefault(); drop.classList.remove('over'); addFiles(e.dataTransfer.files); };
 fileInput.onchange = () => { addFiles(fileInput.files); fileInput.value = ''; };
 
-function addFiles(files) {
-  [...files].forEach(f => {
-    if (!f.type.startsWith('image/')) return;
-    const reader = new FileReader();
-    reader.onload = () => {
-      const img = new Image();
-      img.onload = () => {
-        const MAX = 1600;
-        const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-        const cv = document.createElement('canvas');
-        cv.width = Math.round(img.width * scale);
-        cv.height = Math.round(img.height * scale);
-        cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
-        const url = cv.toDataURL('image/jpeg', 0.9);
-        photos.push({ origDataUrl: url, dataUrl: url, w: cv.width, h: cv.height, place: '', desc: '', shapes: [] });
-        render();
-      };
-      img.src = reader.result;
-    };
-    reader.readAsDataURL(f);
-  });
-}
+function addFiles(files) { return PhotoImport.addFiles(files); }
 
 // ---------- 一覧表示・並べ替え ----------
 const list = document.getElementById('list');
 function render() {
   list.innerHTML = '';
+  const omittedList = document.getElementById('omittedList');
+  omittedList.innerHTML = '';
+  const printable = PhotoCaptionCore.included(photos);
+  document.getElementById('photoCount').textContent = photos.length ? `掲載 ${printable.length}枚 ／ 除外・保留 ${photos.length - printable.length}枚` : '';
+  document.getElementById('omitted').hidden = photos.length === printable.length;
+  document.getElementById('omittedSummary').textContent = `除外・保留 ${photos.length - printable.length}枚（開いて掲載に戻せます）`;
   photos.forEach((p, i) => {
+    PhotoCaptionCore.ensurePhoto(p);
+    const number = printable.indexOf(p) + 1;
     const card = document.createElement('div');
-    card.className = 'card';
+    card.className = 'card' + (p.included ? '' : ' omitted');
     card.draggable = true;
     card.innerHTML = `
-      <div class="no">【写真${i + 1}】<div class="hint">ドラッグで移動</div></div>
+      <div class="no">${number ? `【写真${number}】` : '掲載なし'}<div class="hint">ドラッグで移動</div></div>
       <img src="${p.dataUrl}" title="クリックで丸・矢印を描く / 回転">
       <div class="fields">
+        <span class="filename">${esc(p.filename || '')}</span>
+        <label class="include-label"><input type="checkbox" data-a="include" ${p.included ? 'checked' : ''}> 報告書に掲載</label>
         <input placeholder="場所（例: 厨房 洗浄機下）" value="${esc(p.place)}" data-f="place">
-        <textarea placeholder="説明（例: チャバネゴキブリの生息が見られました。）" data-f="desc">${esc(p.desc)}</textarea>
+        <textarea placeholder="説明（例: 床面に包装袋などのゴミが見られました。）" data-f="desc">${esc(PhotoCaptionCore.description(p, photos))}</textarea>
+        <span class="caption-note">${esc(p.ai.reason || '')}</span>
+        <label class="pair-label">拡大元 <select data-a="parent" aria-label="拡大元の写真"><option value="">指定なし</option>${printable.filter(q => q !== p && !q.ai.parentId).map(q => `<option value="${esc(q.id)}" ${p.ai.parentId === q.id ? 'selected' : ''}>写真${printable.indexOf(q) + 1} ${esc(q.place)}</option>`).join('')}</select></label>
       </div>
       <div class="btns">
         <button data-a="up" title="上へ">▲</button>
@@ -311,8 +342,15 @@ function render() {
       </div>`;
     card.querySelector('img').onclick = () => openEditor(i);
     card.querySelectorAll('[data-f]').forEach(el => {
-      el.oninput = () => { photos[i][el.dataset.f] = el.value; };
+      el.oninput = () => { PhotoCaptionCore.markEdited(p, el.dataset.f, el.value); if (el.dataset.f === 'desc') card.querySelector('[data-a=parent]').value = ''; };
     });
+    card.querySelector('[data-a=include]').onchange = e => { PhotoCaptionCore.markEdited(p, 'included', e.target.checked); render(); };
+    card.querySelector('[data-a=parent]').onchange = e => {
+      p.ai.revision++; p.ai.status = 'manual';
+      if (!p.ai.parentId) p.ai.fallback = p.desc;
+      p.ai.parentId = e.target.value || null;
+      render();
+    };
     card.querySelector('[data-a=up]').onclick = () => move(i, i - 1);
     card.querySelector('[data-a=down]').onclick = () => move(i, i + 1);
     card.querySelector('[data-a=rot]').onclick = async () => {
@@ -328,11 +366,11 @@ function render() {
       e.preventDefault();
       move(+e.dataTransfer.getData('text/plain'), i);
     };
-    list.appendChild(card);
+    (p.included ? list : omittedList).appendChild(card);
   });
 }
 function move(from, to) {
-  if (to < 0 || to >= photos.length || from === to) return;
+  if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || from >= photos.length || to < 0 || to >= photos.length || from === to) return;
   const [x] = photos.splice(from, 1);
   photos.splice(to, 0, x);
   render();
@@ -538,7 +576,9 @@ function recompress(dataUrl, quality) {
 }
 
 gen.onclick = async () => {
-  if (!photos.length) { result.textContent = '写真を追加してください'; return; }
+  if (PhotoImport.busy) { result.textContent = '写真の取り込みが終わるまでお待ちください'; return; }
+  const printable = PhotoCaptionCore.included(photos);
+  if (!printable.length) { result.textContent = '掲載する写真を追加・選択してください'; return; }
   const store = document.getElementById('store').value.trim();
   if (!store) { result.textContent = '店名を入力してください'; return; }
   const reporter = document.getElementById('reporter').value.trim() || '　';
@@ -550,8 +590,8 @@ gen.onclick = async () => {
     const parts = d.split('-').map(Number);
     const y = parts[0], m = parts[1], dd = parts[2];
     const phList = [];
-    for (const p of photos) {
-      phList.push({ data: await toJpegBytes(p.dataUrl), wPx: p.w, hPx: p.h, place: p.place, desc: p.desc });
+    for (const p of printable) {
+      phList.push({ data: await toJpegBytes(p.dataUrl), wPx: p.w, hPx: p.h, place: p.place, desc: PhotoCaptionCore.description(p, photos) });
     }
     const zip = DocxGen.buildReportZip({
       store, y, m, d: dd, reporter,
@@ -578,7 +618,7 @@ gen.onclick = async () => {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    result.innerHTML = `✅ <b>${fname}</b> をダウンロードしました<br>` +
+    result.innerHTML = `✅ <b>${esc(fname)}</b> をダウンロードしました<br>` +
       `<span class="hint">PDFが必要なときは、ダウンロードしたファイルをWordで開いて「ファイル → エクスポート → PDF/XPSの作成」で保存してください。</span>`;
   } catch (e) {
     result.textContent = 'エラー: ' + e;
@@ -586,5 +626,6 @@ gen.onclick = async () => {
   gen.disabled = false;
 };
 </script>
+<script src="photo-import.js"></script>
 </body>
 </html>
